@@ -1,0 +1,5 @@
+# Netlify configuration — PEACE Interviewing Module
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
