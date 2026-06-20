@@ -84,6 +84,3 @@ function json(status, obj) {
     body: JSON.stringify(obj),
   };
 }
-Scroll down → Commit changes → Commit (to main).
-Wait for Netlify's Deploys tab to show the new deploy as Published (~1 min).
-Refresh the health URL — this time it should read "hasKey": true:
