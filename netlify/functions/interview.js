@@ -1,12 +1,15 @@
-// PEACE Interviewing Module — interview backend (with diagnostics)
-// Relays one prompt to the Anthropic Messages API using YOUR key. The key is
-// read from an environment variable; the lookup is case-insensitive so it works
-// whether the variable is ANTHROPIC_API_KEY, Anthropic_API_Key, etc.
+// PEACE Interviewing Module — interview backend
+// Uses YOUR Anthropic key (read case-insensitively from the environment).
+// Picks a valid model automatically by asking your account what's available,
+// so it won't break when model names change. You can still force a specific
+// model by setting an ANTHROPIC_MODEL environment variable.
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MODEL = "claude-3-5-sonnet-latest";
+const MODELS_URL = "https://api.anthropic.com/v1/models";
 const MAX_PROMPT_CHARS = 24000;
 const MAX_TOKENS = 1024;
+
+let cachedModel = null;
 
 function findApiKey() {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
@@ -18,13 +21,51 @@ function findApiKey() {
   return "";
 }
 
+async function listModels(apiKey) {
+  try {
+    const res = await fetch(MODELS_URL, {
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.data || []).map((m) => m.id).filter(Boolean);
+  } catch (e) {
+    console.error("LIST MODELS FAILED:", String(e));
+    return [];
+  }
+}
+
+// Prefer a Sonnet (good balance for a fast chat sim), then Haiku, then anything.
+function pickModel(ids) {
+  return (
+    ids.find((id) => /sonnet/i.test(id)) ||
+    ids.find((id) => /haiku/i.test(id)) ||
+    ids[0] ||
+    null
+  );
+}
+
+async function resolveModel(apiKey) {
+  if (process.env.ANTHROPIC_MODEL) return process.env.ANTHROPIC_MODEL;
+  if (cachedModel) return cachedModel;
+  const ids = await listModels(apiKey);
+  cachedModel = pickModel(ids);
+  return cachedModel;
+}
+
 exports.handler = async (event) => {
-  const model = process.env.ANTHROPIC_MODEL || DEFAULT_MODEL;
   const apiKey = findApiKey();
   const hasKey = !!apiKey;
 
   if (event.httpMethod === "GET") {
-    return json(200, { status: "alive", hasKey, model, node: process.version });
+    const ids = hasKey ? await listModels(apiKey) : [];
+    return json(200, {
+      status: "alive",
+      hasKey,
+      resolvedModel: hasKey ? await resolveModel(apiKey) : null,
+      availableModels: ids,
+      node: process.version,
+    });
   }
   if (event.httpMethod !== "POST") {
     return json(405, { error: "Method not allowed" });
@@ -49,6 +90,12 @@ exports.handler = async (event) => {
     return json(500, { error: "Runtime has no fetch", node: process.version });
   }
 
+  const model = await resolveModel(apiKey);
+  if (!model) {
+    console.error("NO MODEL AVAILABLE for this account");
+    return json(502, { error: "No model available for this account." });
+  }
+
   try {
     const res = await fetch(ANTHROPIC_URL, {
       method: "POST",
@@ -66,8 +113,10 @@ exports.handler = async (event) => {
 
     const raw = await res.text();
     if (!res.ok) {
-      console.error("ANTHROPIC ERROR", res.status, raw.slice(0, 500));
-      return json(502, { error: "Upstream error", status: res.status, detail: raw.slice(0, 500) });
+      // If the chosen model was rejected, clear the cache so the next call re-picks.
+      if (res.status === 404) cachedModel = null;
+      console.error("ANTHROPIC ERROR", res.status, "model:", model, raw.slice(0, 400));
+      return json(502, { error: "Upstream error", status: res.status, detail: raw.slice(0, 400) });
     }
     const data = JSON.parse(raw);
     const text = (data.content || [])
