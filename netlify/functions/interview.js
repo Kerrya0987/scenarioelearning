@@ -1,4 +1,8 @@
 // PEACE Interviewing Module — interview backend (with diagnostics)
+// Relays one prompt to the Anthropic Messages API using YOUR key. The key is
+// read from an environment variable; the lookup is case-insensitive so it works
+// whether the variable is ANTHROPIC_API_KEY, Anthropic_API_Key, etc.
+
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-3-5-sonnet-latest";
 const MAX_PROMPT_CHARS = 24000;
