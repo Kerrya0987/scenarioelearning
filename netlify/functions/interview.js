@@ -1,24 +1,21 @@
-// PEACE Interviewing Module — interview backend
-// Relays one prompt to the Anthropic Messages API using YOUR key.
-// The key is read from the ANTHROPIC_API_KEY environment variable you set in
-// Netlify (Site settings → Environment variables). It is NEVER sent to the browser.
-
+// PEACE Interviewing Module — interview backend (with diagnostics)
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-
-// Model can be overridden with an ANTHROPIC_MODEL env var without editing code.
 const DEFAULT_MODEL = "claude-3-5-sonnet-latest";
-
-// Cheap abuse guards (see README for stronger, account-level limits).
-const MAX_PROMPT_CHARS = 24000; // a single turn's prompt is well under this
+const MAX_PROMPT_CHARS = 24000;
 const MAX_TOKENS = 1024;
 
 exports.handler = async (event) => {
+  const model = process.env.ANTHROPIC_MODEL || DEFAULT_MODEL;
+  const hasKey = !!process.env.ANTHROPIC_API_KEY;
+
+  if (event.httpMethod === "GET") {
+    return json(200, { status: "alive", hasKey, model, node: process.version });
+  }
   if (event.httpMethod !== "POST") {
     return json(405, { error: "Method not allowed" });
   }
-
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) {
+  if (!hasKey) {
+    console.error("MISSING ANTHROPIC_API_KEY");
     return json(500, { error: "Server is missing ANTHROPIC_API_KEY." });
   }
 
@@ -26,11 +23,15 @@ exports.handler = async (event) => {
   try {
     prompt = (JSON.parse(event.body || "{}").prompt || "").toString();
   } catch (e) {
+    console.error("BAD BODY:", String(e));
     return json(400, { error: "Bad request body." });
   }
   if (!prompt) return json(400, { error: "Missing prompt." });
-  if (prompt.length > MAX_PROMPT_CHARS) {
-    return json(413, { error: "Prompt too long." });
+  if (prompt.length > MAX_PROMPT_CHARS) return json(413, { error: "Prompt too long." });
+
+  if (typeof fetch !== "function") {
+    console.error("NO GLOBAL FETCH on node", process.version);
+    return json(500, { error: "Runtime has no fetch", node: process.version });
   }
 
   try {
@@ -38,29 +39,29 @@ exports.handler = async (event) => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": key,
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || DEFAULT_MODEL,
+        model,
         max_tokens: MAX_TOKENS,
         messages: [{ role: "user", content: prompt }],
       }),
     });
 
+    const raw = await res.text();
     if (!res.ok) {
-      const detail = await res.text();
-      return json(502, { error: "Upstream error", detail: detail.slice(0, 500) });
+      console.error("ANTHROPIC ERROR", res.status, raw.slice(0, 500));
+      return json(502, { error: "Upstream error", status: res.status, detail: raw.slice(0, 500) });
     }
-
-    const data = await res.json();
+    const data = JSON.parse(raw);
     const text = (data.content || [])
       .filter((b) => b.type === "text")
       .map((b) => b.text)
       .join("");
-
     return json(200, { text });
   } catch (e) {
+    console.error("REQUEST FAILED:", String(e));
     return json(502, { error: "Request failed", detail: String(e).slice(0, 300) });
   }
 };
