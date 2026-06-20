@@ -4,9 +4,20 @@ const DEFAULT_MODEL = "claude-3-5-sonnet-latest";
 const MAX_PROMPT_CHARS = 24000;
 const MAX_TOKENS = 1024;
 
+function findApiKey() {
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+  for (const name in process.env) {
+    if (/^anthropic[_-]?api[_-]?key$/i.test(name) && process.env[name]) {
+      return process.env[name];
+    }
+  }
+  return "";
+}
+
 exports.handler = async (event) => {
   const model = process.env.ANTHROPIC_MODEL || DEFAULT_MODEL;
-  const hasKey = !!process.env.ANTHROPIC_API_KEY;
+  const apiKey = findApiKey();
+  const hasKey = !!apiKey;
 
   if (event.httpMethod === "GET") {
     return json(200, { status: "alive", hasKey, model, node: process.version });
@@ -15,8 +26,8 @@ exports.handler = async (event) => {
     return json(405, { error: "Method not allowed" });
   }
   if (!hasKey) {
-    console.error("MISSING ANTHROPIC_API_KEY");
-    return json(500, { error: "Server is missing ANTHROPIC_API_KEY." });
+    console.error("NO API KEY FOUND in environment");
+    return json(500, { error: "Server is missing the Anthropic API key." });
   }
 
   let prompt = "";
@@ -39,7 +50,7 @@ exports.handler = async (event) => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -73,3 +84,6 @@ function json(status, obj) {
     body: JSON.stringify(obj),
   };
 }
+Scroll down → Commit changes → Commit (to main).
+Wait for Netlify's Deploys tab to show the new deploy as Published (~1 min).
+Refresh the health URL — this time it should read "hasKey": true:
